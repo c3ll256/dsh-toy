@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 `dsh-toy` is a DeepSeek Harness plugin for connecting small toys to DSH.
 
-At connection time, the agent first asks for the exact brand and model, then selects the connection method automatically:
+At connection time, the agent first asks for the brand and model, then selects the connection method automatically. If the user genuinely does not know, the agent passes `unknown` and starts generic Bluetooth discovery:
 
 - Regular Bluetooth, serial, and USB models use **Buttplug / Intiface**. The plugin starts local Intiface Engine automatically when needed.
 - Known sharing-link models from Ankni (安可尼), MizzZee (谜姬), and Zuiqingfeng (醉清风) use **MonsterParty**. Known dual-output devices expose their channels separately.
@@ -50,9 +50,25 @@ npx -y @deepseek-ai/dsh plugin --profile web remove dsh-toy
 
 Replace `web` with another profile name when needed.
 
+## Quick start
+
+You can tell the agent directly:
+
+```text
+My toy is a Lovense Lush 3. Connect it and scan for devices.
+```
+
+When the brand or model is unknown, say:
+
+```text
+I do not know the brand or model. Try Bluetooth discovery directly.
+```
+
+The agent passes unknown details as `unknown`, connects Intiface automatically, scans, and lists the available controls. Before scanning, turn the toy on, keep it nearby, and make sure a phone app or another program is not holding the device connection.
+
 ## Automatic selection and connection
 
-Before calling `toy_connect`, the agent must ask for the exact model and pass it to the tool, together with the brand when known. The tool never asks the user to select an underlying protocol.
+Before calling `toy_connect`, the agent must ask for the model and pass it to the tool, together with the brand when known. When the user does not know, it passes `unknown` and the system tries generic Bluetooth discovery. The tool never asks the user to select an underlying protocol.
 
 For local Bluetooth, serial, and USB devices, the system first tries an existing Intiface server. If `127.0.0.1:12345` refuses the connection, the plugin runs:
 
@@ -60,7 +76,9 @@ For local Bluetooth, serial, and USB devices, the system first tries an existing
 intiface-engine --websocket-port 12345 --use-bluetooth-le --use-serial --use-hid
 ```
 
-Intiface Engine must therefore be installed with `intiface-engine` available on `PATH`. Set `intifaceExecutable` when it lives elsewhere. On disconnect or unload, the plugin stops only the process it started; it does not stop an Intiface server that was already running.
+The plugin first looks for Intiface Engine on `PATH`. If it is not installed, it downloads a pinned build from the official Buttplug GitHub Release, verifies its SHA-256 digest, caches it in the user cache directory, and starts it. Set `intifaceAutoDownload: false` to disable downloads or `intifaceExecutable` to use another path. On disconnect or unload, the plugin stops only the process it started; it does not stop an Intiface server that was already running.
+
+Automatic downloads currently support macOS ARM64, Linux x64/ARM64, and Windows x64. On other platforms, use `intifaceExecutable` to point to an installed engine. The first scan on macOS may request Bluetooth permission; allow the terminal or application running DSH to access Bluetooth.
 
 The bundled defaults use:
 
@@ -69,6 +87,7 @@ The bundled defaults use:
   config:
     buttplugProtocolVersion: 4
     intifaceExecutable: intiface-engine
+    intifaceAutoDownload: true
     defaultDurationSeconds: 30
     maxDurationSeconds: 300
     maxIntensityPercent: 100
@@ -103,7 +122,7 @@ Sharing tokens are commonly single-use and expire after disconnection. Generate 
 
 | Tool | Purpose |
 |---|---|
-| `toy_connect` | Select a connection from the user-supplied brand/model and connect |
+| `toy_connect` | Connect from the reported model; use `unknown` when it is not known |
 | `toy_scan` | Discover available devices |
 | `toy_list` | List device ids and controllable features |
 | `toy_control` | Send a bounded scalar command |
@@ -111,6 +130,13 @@ Sharing tokens are commonly single-use and expire after disconnection. Generate 
 | `toy_disconnect` | Stop output and close the connection |
 
 Typical sequence: `toy_connect` → `toy_scan` → `toy_list` → `toy_control` → `toy_stop` → `toy_disconnect`.
+
+## Troubleshooting
+
+- `spawn intiface-engine ENOENT`: update to a release with automatic download support, ensure `intifaceAutoDownload: true`, and confirm GitHub is reachable.
+- The scan is empty: enable system Bluetooth, charge and power on the nearby toy, and disconnect any phone app or other controller using it.
+- Intiface starts but scanning fails: check that the operating system granted Bluetooth access to DSH or its terminal.
+- MonsterParty rejects the connection: the sharing token may be used or expired; generate a fresh link and reconnect.
 
 ## Known limitations
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-toy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness plugin for safety-bounded Buttplug/Intiface and MonsterParty toy control",
   "homepage": "https://github.com/c3ll256/dsh-toy#readme",
   "repository": {

@@ -175,13 +175,16 @@ interface IntifaceProcessConfig {
   executable: string;
   websocketUrl: string;
   startupTimeoutMs: number;
+  autoDownload: boolean;
 }
 /** Own at most one Intiface Engine process and stop only the process it created. */
 declare class IntifaceProcessManager {
   private readonly config;
   private child;
+  private executable;
   constructor(config: IntifaceProcessConfig);
   start(signal: AbortSignal): Promise<void>;
+  private spawn;
   assertRunning(): void;
   close(): Promise<void>;
 }
@@ -220,6 +223,20 @@ declare class AutoToyBackend implements ToyBackend {
   close(): Promise<void>;
   private requireActive;
 }
+//#endregion
+//#region src/intiface-download.d.ts
+/** Verified download and extraction of the official Intiface Engine CLI. */
+/** One pinned upstream artifact and its GitHub-provided SHA-256 digest. */
+interface IntifaceArtifact {
+  name: string;
+  sha256: string;
+}
+/** Return the pinned artifact for a supported Node platform/architecture pair. */
+declare function selectIntifaceArtifact(platform?: NodeJS.Platform, arch?: NodeJS.Architecture): IntifaceArtifact;
+/** Extract only the expected executable from a small, non-ZIP64 upstream archive. */
+declare function extractIntifaceExecutable(zip: Buffer, windows?: boolean): Buffer;
+/** Download, verify, cache, and return an executable path for Intiface Engine. */
+declare function installIntifaceEngine(signal: AbortSignal): Promise<string>;
 //#endregion
 //#region src/runtime.d.ts
 /** Deployment safety policy applied to every model-issued command. */
@@ -319,6 +336,8 @@ interface Config {
   intifaceExecutable?: string;
   /** Time allowed for an automatically started Intiface Engine to listen. */
   intifaceStartupTimeoutMs?: number;
+  /** Download a pinned, verified official Intiface Engine when no executable is installed. */
+  intifaceAutoDownload?: boolean;
   /** MonsterParty device-ready timeout. */
   readyTimeoutMs?: number;
   /** MonsterParty application heartbeat interval. */
@@ -341,4 +360,4 @@ declare function resolveConfig(config: Config): ResolvedConfig;
 /** Register the connection, discovery, control, stop, and disconnect tools. */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { AutoToyBackend, type AutoToyBackendConfig, ButtplugBackend, type ButtplugConfig, Config, type IntifaceProcessConfig, IntifaceProcessManager, ManagedButtplugBackend, MonsterPartyBackend, type MonsterPartyConfig, type RuntimeControlRequest, type RuntimeControlResult, type ToyBackend, type ToyConnection, type ToyDevice, ToyError, type ToyFeature, type ToyFeatureKind, type ToyLevelCommand, type ToyProvider, ToyRuntime, type ToySafetyConfig, type ToyTarget, apply, inject, name, parseButtplugDeviceList, resolveConfig, routeToyTarget };
+export { AutoToyBackend, type AutoToyBackendConfig, ButtplugBackend, type ButtplugConfig, Config, type IntifaceArtifact, type IntifaceProcessConfig, IntifaceProcessManager, ManagedButtplugBackend, MonsterPartyBackend, type MonsterPartyConfig, type RuntimeControlRequest, type RuntimeControlResult, type ToyBackend, type ToyConnection, type ToyDevice, ToyError, type ToyFeature, type ToyFeatureKind, type ToyLevelCommand, type ToyProvider, ToyRuntime, type ToySafetyConfig, type ToyTarget, apply, extractIntifaceExecutable, inject, installIntifaceEngine, name, parseButtplugDeviceList, resolveConfig, routeToyTarget, selectIntifaceArtifact };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AutoToyBackend, IntifaceProcessManager, routeToyTarget } from '../src/auto.ts'
+import { selectIntifaceArtifact } from '../src/intiface-download.ts'
 
 const autoConfig = {
   buttplug: {
@@ -21,6 +22,15 @@ describe('automatic toy routing', () => {
   it('recognizes Chemtrails models and sends other models to local hardware discovery', () => {
     expect(routeToyTarget({ brand: '安可尼', model: 'AKN_DS_SUCKEGG' })).toBe('monsterparty')
     expect(routeToyTarget({ brand: 'Lovense', model: 'Lush 3' })).toBe('buttplug')
+    expect(routeToyTarget({ brand: 'unknown', model: 'unknown' })).toBe('buttplug')
+  })
+
+  it('selects only pinned official builds for supported platforms', () => {
+    expect(selectIntifaceArtifact('darwin', 'arm64')).toMatchObject({
+      name: 'intiface-engine-v4.0.2-macos-arm64.zip',
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+    expect(() => selectIntifaceArtifact('darwin', 'x64')).toThrow('unavailable for darwin-x64')
   })
 
   it('requires the agent to provide a model and reports missing remote-link configuration', async () => {
