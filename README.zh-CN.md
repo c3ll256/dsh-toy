@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-`dsh-toy` 是一个可安装的 DeepSeek Harness bundle，用于把部分个人触觉与交互硬件接入模型驱动的工作流。
+`dsh-toy` 是一个 DeepSeek Harness 插件，用于将小玩具接入 DSH。
 
 支持两类 provider：
 
