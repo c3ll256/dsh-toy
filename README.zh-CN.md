@@ -6,10 +6,12 @@
 
 `dsh-toy` 是一个 DeepSeek Harness 插件，用于将小玩具接入 DSH。
 
-支持两类 provider：
+连接时，agent 会先询问玩具的品牌和准确型号，再自动选择连接方式：
 
-- **Buttplug / Intiface**：连接本机 Intiface Central 或 Intiface Engine 的 WebSocket 服务。默认使用协议 v4，也可切换到 v3 兼容模式。
-- **MonsterParty**：使用安可尼、谜姬、醉清风等品牌分享链接中的短期 token。已知双通道设备会分别暴露各个输出通道。
+- 普通蓝牙、串口或 USB 型号通过 **Buttplug / Intiface** 连接；插件会在需要时自动启动本机 Intiface Engine。
+- 安可尼、谜姬、醉清风等已知分享链接型号通过 **MonsterParty** 连接；已知双通道设备会分别暴露各个输出通道。
+
+用户不需要理解或选择底层连接方式，也不需要手动启动 Intiface。
 
 本实现参考了 [Chemtrails](https://github.com/Kristenkristen/Chemtrails) 发布的协议记录，以及 [Buttplug](https://github.com/buttplugio/buttplug) 和 [Buttplug Protocol Specification](https://buttplug.io/docs/spec/) 的设备抽象与消息格式。仓库中的 TypeScript 代码为独立实现，归属说明见 [NOTICE](NOTICE)。
 
@@ -18,7 +20,7 @@
 - 分享 token 只保存在插件配置中，不会出现在模型可见的工具参数或结果里。
 - 默认在 30 秒后自动停止输出。
 - 默认禁止零时长保持；只有显式配置 `allowHold: true` 才会启用。
-- provider 收到命令前会执行 `maxIntensityPercent` 和 `maxDurationSeconds` 限制。
+- 连接后端收到命令前会执行 `maxIntensityPercent` 和 `maxDurationSeconds` 限制。
 - 同一设备的新命令会替换旧的自动停止计时器。
 - `toy_stop` 省略设备 id 时停止全部设备。
 - 插件卸载、HMR 或 `toy_disconnect` 会停止输出并等待 WebSocket 关闭。
@@ -48,22 +50,32 @@ npx -y @deepseek-ai/dsh plugin --profile web remove dsh-toy
 
 需要其他 profile 时，将 `web` 替换为对应名称。
 
-## Buttplug / Intiface
+## 自动识别与连接
 
-先启动 Intiface Central 或 Intiface Engine，并启用 WebSocket server。bundle 默认配置为：
+调用 `toy_connect` 前，agent 必须先询问用户的准确型号，并把型号（以及已知时的品牌）传给工具。工具不会让用户选择底层协议。
+
+对于本地蓝牙、串口或 USB 设备，系统先尝试连接已有 Intiface 服务；如果 `127.0.0.1:12345` 拒绝连接，插件会自行运行：
+
+```sh
+intiface-engine --websocket-port 12345 --use-bluetooth-le --use-serial --use-hid
+```
+
+因此 Intiface Engine 需要已经安装，并且 `intiface-engine` 位于 `PATH`。若可执行文件位于其他位置，可设置 `intifaceExecutable`。插件只会在断开或卸载时终止由自己启动的进程，不会关闭用户原本已运行的 Intiface。
+
+bundle 默认配置为：
 
 ```yaml
 - id: dsh-toy
   config:
-    provider: buttplug
     buttplugProtocolVersion: 4
+    intifaceExecutable: intiface-engine
     defaultDurationSeconds: 30
     maxDurationSeconds: 300
     maxIntensityPercent: 100
     allowHold: false
 ```
 
-旧版 Intiface server 可设置 `buttplugProtocolVersion: 3`。provider 会暴露连接设备声明的、可映射为百分比的标量 feature。
+旧版 Intiface server 可设置 `buttplugProtocolVersion: 3`。系统会暴露连接设备声明的、可映射为百分比的标量 feature。
 
 ## MonsterParty
 
@@ -78,7 +90,6 @@ MONSTERPARTY_TOKEN=<TOKEN>
 ```yaml
 - id: dsh-toy
   config:
-    provider: monsterparty
     monsterPartySessionToken: !!js process.env.MONSTERPARTY_TOKEN
     defaultDurationSeconds: 30
     maxDurationSeconds: 300
@@ -92,7 +103,7 @@ MONSTERPARTY_TOKEN=<TOKEN>
 
 | 工具 | 作用 |
 |---|---|
-| `toy_connect` | 连接配置好的 provider |
+| `toy_connect` | 根据用户提供的品牌和型号自动选择连接方式并连接 |
 | `toy_scan` | 发现可用设备 |
 | `toy_list` | 列出设备 id 和可控 feature |
 | `toy_control` | 发送有界标量命令 |
@@ -103,8 +114,8 @@ MONSTERPARTY_TOKEN=<TOKEN>
 
 ## 已知限制
 
-- MonsterParty provider 只实现 Chemtrails 记录的 relay 行为和 `AKN_DS_SUCKEGG` 映射；厂商协议变化可能需要更新实现。
-- Buttplug provider 当前只暴露标量 feature；位置、方向、传感器、原始访问和订阅不在当前范围内。
+- MonsterParty 连接只实现 Chemtrails 记录的 relay 行为和 `AKN_DS_SUCKEGG` 映射；厂商协议变化可能需要更新实现。
+- Buttplug 连接当前只暴露标量 feature；位置、方向、传感器、原始访问和订阅不在当前范围内。
 - 测试使用本地协议 fixture，不连接物理硬件。
 - 设备重连后应重新调用 `toy_list` 刷新设备 id。
 

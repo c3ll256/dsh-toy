@@ -6,6 +6,7 @@ import {
   type ToyConnection,
   type ToyDevice,
   type ToyFeatureKind,
+  type ToyTarget,
 } from './types.ts'
 
 /** Deployment safety policy applied to every model-issued command. */
@@ -69,8 +70,8 @@ export class ToyRuntime {
   ) {}
 
   /** Establish the provider connection. */
-  connect(signal: AbortSignal): Promise<ToyConnection> {
-    return this.exclusive(() => this.backend.connect(signal), signal)
+  connect(target: ToyTarget, signal: AbortSignal): Promise<ToyConnection> {
+    return this.exclusive(() => this.backend.connect(signal, target), signal)
   }
 
   /** Run provider discovery for a bounded interval. */
