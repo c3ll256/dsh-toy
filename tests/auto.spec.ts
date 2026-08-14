@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { AutoToyBackend, IntifaceProcessManager, routeToyTarget } from '../src/auto.ts'
+import { AutoToyBackend, intifaceArguments, IntifaceProcessManager, routeToyTarget } from '../src/auto.ts'
 import { selectIntifaceArtifact } from '../src/intiface-download.ts'
+import { createIntifaceUserDeviceConfig } from '../src/intiface-user-config.ts'
 
 const autoConfig = {
   buttplug: {
@@ -31,6 +32,23 @@ describe('automatic toy routing', () => {
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
     expect(() => selectIntifaceArtifact('darwin', 'x64')).toThrow('unavailable for darwin-x64')
+  })
+
+  it('builds a verified RoomFun mapping for supported Intiface schemas', () => {
+    const config = JSON.parse(createIntifaceUserDeviceConfig(4)) as {
+      version: { major: number }
+      user_configs: { protocols: { monsterpub: {
+        communication: Array<{ btle: { names: string[] } }>
+        configurations: Array<{ identifier: string[], features: unknown[] }>
+      } } }
+    }
+    const monsterpub = config.user_configs.protocols.monsterpub
+    expect(config.version.major).toBe(4)
+    expect(monsterpub.communication[0]?.btle.names).toContain('RoomFun')
+    expect(monsterpub.configurations[0]).toMatchObject({ identifier: ['RF_CANNON_PT3'] })
+    expect(monsterpub.configurations[0]?.features).toHaveLength(1)
+    expect(intifaceArguments(12345, '/tmp/user.json')).toContain('/tmp/user.json')
+    expect(() => createIntifaceUserDeviceConfig(3)).toThrow('Unsupported Intiface')
   })
 
   it('requires the agent to provide a model and reports missing remote-link configuration', async () => {
