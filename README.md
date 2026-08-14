@@ -1,8 +1,10 @@
 # dsh-toy
 
+[![CI](https://github.com/c3ll256/dsh-toy/actions/workflows/ci.yml/badge.svg)](https://github.com/c3ll256/dsh-toy/actions/workflows/ci.yml)
+
 English | [简体中文](README.zh-CN.md)
 
-`dsh-toy` is an installable DeepSeek Harness bundle for connecting selected personal haptics and interactive hardware to model-driven workflows.
+`dsh-toy` is a DeepSeek Harness plugin for connecting small toys to DSH.
 
 It supports two providers:
 
@@ -23,30 +25,28 @@ The implementation follows protocol observations from [Chemtrails](https://githu
 
 Use only hardware you own or are explicitly authorized to control. Treat sharing tokens as temporary control credentials and keep them out of Git, logs, and conversations.
 
-## Development
+## Install
+
+Requirements: Node.js 22.19 or newer and pnpm on `PATH`. Install pnpm once if needed with `npm install --global pnpm@10`, then add the plugin directly from GitHub:
 
 ```sh
-pnpm install
-pnpm run check
+npx -y @deepseek-ai/dsh plugin --profile web add github:c3ll256/dsh-toy
 ```
 
-Requirements: Node.js 22.19 or newer and pnpm 10.
-
-## Install into a Harness profile
-
-From a checkout of this repository:
+Start DSH with the same profile:
 
 ```sh
-dsh plugin --profile web add .
-dsh --profile web --dump-config
-dsh --profile web
+npx -y @deepseek-ai/dsh web
 ```
 
-Replace `web` with another profile name when needed. Remove the bundle with:
+The first command installs and activates the bundle persistently in the `web` profile. Re-running DSH does not reinstall it. To inspect the composed configuration or remove the bundle:
 
 ```sh
-dsh plugin --profile web remove dsh-toy
+npx -y @deepseek-ai/dsh --profile web --dump-config
+npx -y @deepseek-ai/dsh plugin --profile web remove dsh-toy
 ```
+
+Replace `web` with another profile name when needed.
 
 ## Buttplug / Intiface
 
@@ -107,6 +107,13 @@ Typical sequence: `toy_connect` → `toy_scan` → `toy_list` → `toy_control` 
 - The Buttplug provider currently exposes scalar features only; position, direction, sensors, raw access, and subscriptions are outside the current scope.
 - Tests use local protocol fixtures rather than physical hardware.
 - Device ids should be refreshed with `toy_list` after reconnection.
+
+## Development
+
+```sh
+pnpm install
+pnpm run check
+```
 
 ## License
 

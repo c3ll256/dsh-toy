@@ -2,6 +2,14 @@
   "name": "dsh-toy",
   "version": "0.1.0",
   "description": "DeepSeek Harness plugin for safety-bounded Buttplug/Intiface and MonsterParty toy control",
+  "homepage": "https://github.com/c3ll256/dsh-toy#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/c3ll256/dsh-toy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/c3ll256/dsh-toy/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -29,7 +37,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
-    "prepare": "pnpm run build"
+    "prepack": "pnpm run build"
   },
   "keywords": [
     "deepseek-harness",
@@ -39,21 +47,27 @@
     "monsterparty"
   ],
   "license": "BSD-3-Clause",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.19"
   },
   "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
     "ws": "^8.21.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1-rc.1",
-    "@deepseek-ai/dsh-tools": "^0.0.1-rc.2",
-    "@deepseek-ai/schemastery": "^3.18.1-rc.1"
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "link:../test-c3ll256/vendor/cordis",
-    "@deepseek-ai/dsh-tools": "link:../test-c3ll256/packages/core/tools",
-    "@deepseek-ai/schemastery": "link:../test-c3ll256/vendor/schemastery",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@types/node": "^24.10.13",
     "@types/ws": "^8.18.1",
     "tsdown": "^0.22.2",

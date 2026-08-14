@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - name: Verify committed build artifacts
+        run: git diff --exit-code -- lib
+      - run: pnpm pack --pack-destination artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: artifacts/*.tgz
+
+  install-smoke:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm pack --pack-destination artifacts
+      - name: Install the bundle into a clean DSH profile
+        run: |
+          package_path="$(find "$GITHUB_WORKSPACE/artifacts" -name '*.tgz' -print -quit)"
+          DSH_HOME="$RUNNER_TEMP/dsh-home" npx -y @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web add "$package_path"
+          DSH_HOME="$RUNNER_TEMP/dsh-home" npx -y @deepseek-ai/dsh@0.1.0-rc.6 --profile web --dump-config | grep -q 'id: dsh-toy'
+      - name: Boot DSH with the installed bundle
+        run: |
+          status=0
+          timeout --signal=INT --kill-after=5s 15s env DSH_HOME="$RUNNER_TEMP/dsh-home" npx -y @deepseek-ai/dsh@0.1.0-rc.6 web --port 0 > "$RUNNER_TEMP/dsh-web.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/dsh-web.log"
+          test "$status" -eq 124
+          grep -q 'dsh web: http://' "$RUNNER_TEMP/dsh-web.log"
