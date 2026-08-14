@@ -4,7 +4,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-`dsh-toy` is a DeepSeek Harness plugin for connecting small toys to DSH.
+`dsh-toy` is a DeepSeek Harness plugin for connecting sex toys to DSH.
 
 At connection time, the agent first asks for the brand and model, then selects the connection method automatically. If the user genuinely does not know, the agent starts unknown-hardware discovery:
 
