@@ -1,5 +1,7 @@
 # dsh-toy
 
+[![CI](https://github.com/c3ll256/dsh-toy/actions/workflows/ci.yml/badge.svg)](https://github.com/c3ll256/dsh-toy/actions/workflows/ci.yml)
+
 [English](README.md) | 简体中文
 
 `dsh-toy` 是一个 DeepSeek Harness 插件，用于将小玩具接入 DSH。
@@ -23,30 +25,28 @@
 
 只控制你本人拥有或已获得明确授权的设备。分享 token 属于临时控制凭据，不要提交到 Git，也不要暴露在日志或对话中。
 
-## 开发
+## 安装
+
+运行要求：Node.js 22.19 或更高版本，并确保 `pnpm` 在 `PATH` 中。如尚未安装 pnpm，先运行一次 `npm install --global pnpm@10`，然后直接从 GitHub 安装插件：
 
 ```sh
-pnpm install
-pnpm run check
+npx -y @deepseek-ai/dsh plugin --profile web add github:c3ll256/dsh-toy
 ```
 
-运行要求：Node.js 22.19 或更高版本，pnpm 10。
-
-## 安装到 Harness profile
-
-在本仓库 checkout 中运行：
+使用同一个 profile 启动 DSH：
 
 ```sh
-dsh plugin --profile web add .
-dsh --profile web --dump-config
-dsh --profile web
+npx -y @deepseek-ai/dsh web
 ```
 
-需要其他 profile 时，将 `web` 替换为对应名称。移除 bundle：
+第一条命令会把 bundle 持久安装并启用到 `web` profile，之后启动 DSH 时无需重复安装。查看组合配置或移除 bundle：
 
 ```sh
-dsh plugin --profile web remove dsh-toy
+npx -y @deepseek-ai/dsh --profile web --dump-config
+npx -y @deepseek-ai/dsh plugin --profile web remove dsh-toy
 ```
+
+需要其他 profile 时，将 `web` 替换为对应名称。
 
 ## Buttplug / Intiface
 
@@ -107,6 +107,13 @@ MONSTERPARTY_TOKEN=<TOKEN>
 - Buttplug provider 当前只暴露标量 feature；位置、方向、传感器、原始访问和订阅不在当前范围内。
 - 测试使用本地协议 fixture，不连接物理硬件。
 - 设备重连后应重新调用 `toy_list` 刷新设备 id。
+
+## 开发
+
+```sh
+pnpm install
+pnpm run check
+```
 
 ## 许可证
 
