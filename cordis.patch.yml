@@ -2,7 +2,6 @@
     - id: dsh-toy
       name: dsh-toy
       config:
-        provider: buttplug
         buttplugUrl: ws://127.0.0.1:12345
         buttplugProtocolVersion: 4
         defaultDurationSeconds: 30

@@ -6,6 +6,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
+import { AutoToyBackend } from './auto.ts'
 import { ButtplugBackend } from './buttplug.ts'
 import { MonsterPartyBackend } from './monsterparty.ts'
 import { ToyRuntime } from './runtime.ts'
@@ -13,6 +14,10 @@ import type { ToyBackend, ToyDevice, ToyFeatureKind } from './types.ts'
 
 export { ButtplugBackend, parseButtplugDeviceList } from './buttplug.ts'
 export type { ButtplugConfig } from './buttplug.ts'
+export { AutoToyBackend, IntifaceProcessManager, ManagedButtplugBackend, routeToyTarget } from './auto.ts'
+export type { AutoToyBackendConfig, IntifaceProcessConfig } from './auto.ts'
+export { extractIntifaceExecutable, installIntifaceEngine, selectIntifaceArtifact } from './intiface-download.ts'
+export type { IntifaceArtifact } from './intiface-download.ts'
 export { MonsterPartyBackend } from './monsterparty.ts'
 export type { MonsterPartyConfig } from './monsterparty.ts'
 export { ToyRuntime } from './runtime.ts'
@@ -26,6 +31,7 @@ export type {
   ToyFeatureKind,
   ToyLevelCommand,
   ToyProvider,
+  ToyTarget,
 } from './types.ts'
 
 /** Cordis plugin name. */
@@ -36,8 +42,6 @@ export const inject = ['tools']
 
 /** Complete deployment configuration; defaults are filled by Schemastery. */
 export interface Config {
-  /** Active transport provider. */
-  provider?: 'buttplug' | 'monsterparty'
   /** Local Intiface WebSocket endpoint. */
   buttplugUrl?: string
   /** Negotiated Buttplug protocol major version. */
@@ -48,12 +52,18 @@ export interface Config {
   monsterPartyApiUrl?: string
   /** MonsterParty relay Origin header. */
   monsterPartyOrigin?: string
-  /** Client identity presented to both providers. */
+  /** Client identity presented to both connection backends. */
   clientName?: string
   /** HTTP/WebSocket setup timeout. */
   connectionTimeoutMs?: number
   /** Buttplug request timeout. */
   requestTimeoutMs?: number
+  /** Intiface Engine executable discovered through PATH unless overridden. */
+  intifaceExecutable?: string
+  /** Time allowed for an automatically started Intiface Engine to listen. */
+  intifaceStartupTimeoutMs?: number
+  /** Download a pinned, verified official Intiface Engine when no executable is installed. */
+  intifaceAutoDownload?: boolean
   /** MonsterParty device-ready timeout. */
   readyTimeoutMs?: number
   /** MonsterParty application heartbeat interval. */
@@ -71,7 +81,6 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
-  provider: z.union(['buttplug', 'monsterparty'] as const).default('buttplug'),
   buttplugUrl: z.string().default('ws://127.0.0.1:12345'),
   buttplugProtocolVersion: z.union([3, 4] as const).default(4),
   monsterPartySessionToken: z.string(),
@@ -80,6 +89,9 @@ export const Config: z<Config> = z.object({
   clientName: z.string().default('dsh-toy'),
   connectionTimeoutMs: z.number().default(10_000),
   requestTimeoutMs: z.number().default(5_000),
+  intifaceExecutable: z.string().default('intiface-engine'),
+  intifaceStartupTimeoutMs: z.number().default(10_000),
+  intifaceAutoDownload: z.boolean().default(true),
   readyTimeoutMs: z.number().default(20_000),
   heartbeatIntervalMs: z.number().default(9_000),
   scanDurationMs: z.number().default(5_000),
@@ -110,7 +122,7 @@ function nonNegativeNumber(config: ResolvedConfig, key: keyof ResolvedConfig): v
 /** Resolve configuration and fail plugin load on unsafe or incomplete values. */
 export function resolveConfig(config: Config): ResolvedConfig {
   const resolved = config as ResolvedConfig
-  for (const key of ['connectionTimeoutMs', 'requestTimeoutMs', 'readyTimeoutMs', 'heartbeatIntervalMs', 'scanDurationMs'] as const) {
+  for (const key of ['connectionTimeoutMs', 'requestTimeoutMs', 'intifaceStartupTimeoutMs', 'readyTimeoutMs', 'heartbeatIntervalMs', 'scanDurationMs'] as const) {
     positiveInteger(resolved, key)
   }
   for (const key of ['defaultDurationSeconds', 'maxDurationSeconds', 'maxIntensityPercent'] as const) {
@@ -122,22 +134,36 @@ export function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(resolved.maxIntensityPercent) || resolved.maxIntensityPercent > 100) {
     throw new Error('dsh-toy: maxIntensityPercent must be a safe integer from 0 to 100')
   }
-  if (resolved.provider === 'monsterparty' && (resolved.monsterPartySessionToken?.length ?? 0) === 0) {
-    throw new Error('dsh-toy: monsterPartySessionToken is required for the monsterparty provider')
+  for (const [key, value, protocols] of [
+    ['buttplugUrl', resolved.buttplugUrl, ['ws:', 'wss:']],
+    ['monsterPartyApiUrl', resolved.monsterPartyApiUrl, ['http:', 'https:']],
+  ] as const) {
+    try {
+      if (!protocols.some(protocol => protocol === new URL(value).protocol)) throw new Error('unsupported URL protocol')
+    } catch {
+      throw new Error(`dsh-toy: invalid ${key}`)
+    }
   }
-  try {
-    const url = new URL(resolved.provider === 'buttplug' ? resolved.buttplugUrl : resolved.monsterPartyApiUrl)
-    const allowed = resolved.provider === 'buttplug' ? ['ws:', 'wss:'] : ['http:', 'https:']
-    if (!allowed.includes(url.protocol)) throw new Error('unsupported URL protocol')
-  } catch {
-    throw new Error(`dsh-toy: invalid ${resolved.provider === 'buttplug' ? 'buttplugUrl' : 'monsterPartyApiUrl'}`)
-  }
+  if (resolved.intifaceExecutable.trim().length === 0) throw new Error('dsh-toy: intifaceExecutable cannot be empty')
   return resolved
 }
 
 function createBackend(config: ResolvedConfig): ToyBackend {
-  if (config.provider === 'monsterparty') {
-    return new MonsterPartyBackend({
+  return new AutoToyBackend({
+    buttplug: {
+      url: config.buttplugUrl,
+      protocolVersion: config.buttplugProtocolVersion,
+      connectionTimeoutMs: config.connectionTimeoutMs,
+      requestTimeoutMs: config.requestTimeoutMs,
+      clientName: config.clientName,
+    },
+    intiface: {
+      executable: config.intifaceExecutable,
+      websocketUrl: config.buttplugUrl,
+      startupTimeoutMs: config.intifaceStartupTimeoutMs,
+      autoDownload: config.intifaceAutoDownload,
+    },
+    ...((config.monsterPartySessionToken?.length ?? 0) === 0 ? {} : { monsterParty: {
       sessionToken: config.monsterPartySessionToken!,
       apiUrl: config.monsterPartyApiUrl,
       origin: config.monsterPartyOrigin,
@@ -145,14 +171,7 @@ function createBackend(config: ResolvedConfig): ToyBackend {
       connectionTimeoutMs: config.connectionTimeoutMs,
       readyTimeoutMs: config.readyTimeoutMs,
       heartbeatIntervalMs: config.heartbeatIntervalMs,
-    })
-  }
-  return new ButtplugBackend({
-    url: config.buttplugUrl,
-    protocolVersion: config.buttplugProtocolVersion,
-    connectionTimeoutMs: config.connectionTimeoutMs,
-    requestTimeoutMs: config.requestTimeoutMs,
-    clientName: config.clientName,
+    } }),
   })
 }
 
@@ -199,27 +218,35 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'toy_connect',
-    description: 'Connect to the configured toy provider. Secrets come only from plugin config and are never tool arguments.',
-    parameters: {},
+    description: 'Before the first connection, ask the user for the toy brand and model. If they do not know either value, pass "unknown" and try generic Bluetooth discovery. Never ask the user to choose a connection backend, install Intiface, or start Intiface. The tool selects the connection, downloads a verified official Intiface Engine when missing, and starts it automatically. Secrets come only from plugin config.',
+    parameters: {
+      model: { type: 'string', required: true, description: 'Product model reported by the user, or "unknown" when they explicitly do not know it. Do not guess.' },
+      brand: { type: 'string', description: 'Brand reported by the user, when known.' },
+    },
     output: {
       schema: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          provider: { type: 'string', required: true, enum: ['buttplug', 'monsterparty'] },
           serverName: { type: 'string', required: true },
           devices: { type: 'array', required: true, items: DEVICE_SCHEMA },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
-    execute: async (_args, exec) => runtime.connect(exec.signal),
-    presentCall: () => ({ card: 'generic', title: 'Connect toy provider', kind: 'other' }),
+    execute: async (args, exec) => {
+      const connection = await runtime.connect({
+        model: args.model,
+        ...(args.brand === undefined ? {} : { brand: args.brand }),
+      }, exec.signal)
+      return { serverName: connection.serverName, devices: connection.devices }
+    },
+    presentCall: args => ({ card: 'generic', title: `Connect ${args.model}`, kind: 'other' }),
   }))
 
   ctx.tools.register(defineTool({
     name: 'toy_scan',
-    description: 'Scan for devices using the deployment-configured bounded discovery window.',
+    description: 'After toy_connect has selected and connected the user-confirmed model, scan for devices using the bounded discovery window.',
     parameters: {},
     output: {
       schema: { type: 'array', items: DEVICE_SCHEMA },
@@ -307,7 +334,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'toy_disconnect',
-    description: 'Stop all output and disconnect the configured provider. A later toy_connect can reconnect.',
+    description: 'Stop all output, disconnect the toy, and stop any Intiface Engine process started by this plugin. A later toy_connect can reconnect.',
     parameters: {},
     output: {
       schema: {
@@ -321,6 +348,6 @@ export function apply(ctx: Context, config: Config): void {
       await runtime.disconnect(exec.signal)
       return { disconnected: true }
     },
-    presentCall: () => ({ card: 'generic', title: 'Disconnect toy provider', kind: 'other' }),
+    presentCall: () => ({ card: 'generic', title: 'Disconnect toy', kind: 'other' }),
   }))
 }

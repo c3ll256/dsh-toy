@@ -1,6 +1,14 @@
 /** Provider kinds supported by dsh-toy. */
 export type ToyProvider = 'buttplug' | 'monsterparty'
 
+/** Hardware identity supplied by the user so the plugin can select the transport. */
+export interface ToyTarget {
+  /** Optional brand, useful when a model name is ambiguous. */
+  brand?: string
+  /** Exact product model printed in the app, packaging, or device label. */
+  model: string
+}
+
 /** Safety-reviewed scalar actuator kinds exposed to the model. */
 export type ToyFeatureKind = 'vibrate' | 'oscillate' | 'constrict' | 'inflate' | 'suction'
 
@@ -53,7 +61,7 @@ export interface ToyBackend {
   /** Provider discriminator. */
   readonly provider: ToyProvider
   /** Establish a connection and return the initial device snapshot. */
-  connect(signal: AbortSignal): Promise<ToyConnection>
+  connect(signal: AbortSignal, target?: ToyTarget): Promise<ToyConnection>
   /** Discover devices for the configured bounded interval. */
   scan(durationMs: number, signal: AbortSignal): Promise<ToyDevice[]>
   /** Return a fresh device snapshot without network discovery. */
