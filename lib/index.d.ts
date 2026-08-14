@@ -2,7 +2,7 @@ import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 //#region src/types.d.ts
 /** Provider kinds supported by dsh-toy. */
-type ToyProvider = 'buttplug' | 'monsterparty';
+type ToyProvider = 'buttplug' | 'monsterparty' | 'dglab';
 /** Hardware identity supplied by the user so the plugin can select the transport. */
 interface ToyTarget {
   /** Optional brand, useful when a model name is ambiguous. */
@@ -119,6 +119,176 @@ declare class ButtplugBackend implements ToyBackend {
   private assertConnected;
 }
 //#endregion
+//#region src/dglab/protocol.d.ts
+/**
+ * DG-LAB Coyote V3 protocol layer — pure functions and constants.
+ *
+ * This module contains no networking code; it can be unit-tested in isolation.
+ * All protocol details (command formats, frame structure, QR payload, strength
+ * mapping) live here so the connection layer stays clean.
+ */
+/** Maximum characters of a single WebSocket JSON frame (official V3 spec). */
+declare const MAX_MESSAGE_LENGTH = 1950;
+/** Maximum waveform entries per pulse command (conservative below the official 100). */
+declare const MAX_PULSE_PER_SEND = 70;
+/** Device-reported default strength limit. */
+declare const DEFAULT_STRENGTH_LIMIT = 200;
+/** Channel identifier for strength and clear commands (1 = A, 2 = B). */
+type StrengthChannel = '1' | '2';
+/** Strength change mode (0 = decrement, 1 = increment, 2 = set absolute). */
+type StrengthMode = '0' | '1' | '2';
+/** Channel identifier for pulse commands (A or B). */
+type PulseChannel = 'A' | 'B';
+/**
+ * Build a strength command string.
+ * Format: `strength-{channel}+{mode}+{value}` (value 0-200).
+ */
+declare function strengthCmd(channel: StrengthChannel, mode: StrengthMode, value: number): string;
+/**
+ * Build a clear-queue command string.
+ * Format: `clear-{channel}` (channel 1 = A, 2 = B).
+ */
+declare function clearCmd(channel: StrengthChannel): string;
+/**
+ * Build a pulse (waveform) command string, capping the array length and total
+ * JSON frame size to stay within the 1950-character protocol limit.
+ *
+ * Format: `pulse-{channel}:{hexArrayJson}`.
+ * Each hex string must be exactly 16 hex chars (8 bytes: 4 frequency + 4 intensity).
+ *
+ * @param messageBudget - Maximum length of the command string (message field).
+ *   Callers should pass `MAX_MESSAGE_LENGTH - frameEnvelopeLength` so the
+ *   *entire* JSON frame — not just the message field — fits within the limit.
+ *   Defaults to `MAX_MESSAGE_LENGTH` for backward compatibility.
+ * @throws {ToyError} if any hex string is not 16 characters long.
+ */
+declare function pulseCmd(channel: PulseChannel, hexArray: string[], messageBudget?: number): string;
+/** Result of mapping intensity percentage to per-channel device strength. */
+interface StrengthMapping {
+  /** Target strength for channel A (0-limitA). */
+  a: number;
+  /** Target strength for channel B (0-limitB). */
+  b: number;
+}
+/**
+ * Map an intensity percentage (0-100) to device strength values (0-200),
+ * clamped to both the configured maximum and the device-reported per-channel limits.
+ *
+ * @param intensityPercent - Caller-supplied percentage (0-100, clamped internally).
+ * @param maxStrength - Configured maximum strength (typically 200).
+ * @param limitA - Device-reported maximum for channel A.
+ * @param limitB - Device-reported maximum for channel B.
+ * @returns Clamped strength values for both channels.
+ */
+declare function mapIntensityToStrength(intensityPercent: number, maxStrength: number, limitA: number, limitB: number): StrengthMapping;
+/** Configuration owned by the DG-LAB Coyote provider. */
+interface DgLabConfig {
+  /** TCP port for the WebSocket server (0 = random ephemeral). */
+  listenPort: number;
+  /** Hostname or IP embedded in the QR code (must be reachable from the phone). */
+  publicHost: string;
+  /** WebSocket protocol scheme for the QR code URL. */
+  wsScheme: 'ws' | 'wss';
+  /** Heartbeat broadcast interval in milliseconds. */
+  heartbeatIntervalMs: number;
+  /** Maximum strength value (0-200) mapped from 100% intensity. */
+  maxStrength: number;
+  /** Timeout for waiting the App to bind during scan, in milliseconds. */
+  readyTimeoutMs: number;
+}
+/**
+ * Build the QR code payload string expected by the DG-LAB app.
+ * Format: `https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#{wsUrl}/{controlId}`
+ */
+declare function buildQrPayload(wsUrl: string, controlId: string): string;
+//#endregion
+//#region src/dglab/backend.d.ts
+/**
+ * In-process DG-LAB Coyote backend that runs a WebSocket server, renders a QR
+ * code for App binding, and translates scalar intensity commands into V3
+ * protocol strength/clear operations.
+ */
+declare class DgLabBackend implements ToyBackend {
+  private readonly config;
+  readonly provider: "dglab";
+  private wss;
+  private controlId;
+  private actualPort;
+  private qrPath;
+  private qrPayload;
+  private appSocket;
+  private appId;
+  private ready;
+  private heartbeat;
+  /** Current device-reported strength (0-200) per channel. */
+  private strengthA;
+  private strengthB;
+  /** Current device-reported strength limits (0-200) per channel. */
+  private limitA;
+  private limitB;
+  /** Promise resolved when the App binds; used for event-driven wait. */
+  private readyPromise;
+  private resolveReady;
+  /** Timestamp of the last message received from the App. */
+  private lastAppMessageTime;
+  /** @param config - Validated binding and strength configuration. */
+  constructor(config: DgLabConfig);
+  connect(signal: AbortSignal): Promise<ToyConnection>;
+  scan(durationMs: number, signal: AbortSignal): Promise<ToyDevice[]>;
+  list(): ToyDevice[];
+  setLevel(command: ToyLevelCommand, signal: AbortSignal): Promise<void>;
+  stop(deviceId: string | undefined, signal?: AbortSignal): Promise<void>;
+  close(): Promise<void>;
+  /** Return the QR code payload URL string for agent display. */
+  getQrPayload(): string;
+  /** Return the generated QR code image file path, if any. */
+  getQrPath(): string;
+  /** Return whether the App is currently bound and the device is ready. */
+  isReady(): boolean;
+  /** Return the actual WebSocket server port (useful when listenPort is 0). */
+  getActualPort(): number;
+  /** Return the current device-reported strength and per-channel limits. */
+  getStrength(): {
+    a: number;
+    b: number;
+    limitA: number;
+    limitB: number;
+  };
+  /**
+   * Send a waveform pulse pattern to a specific channel.
+   * Each hex string is an 8-byte (16 hex char) value: 4 frequency bytes + 4 intensity bytes.
+   * This is an advanced operation not exposed through the scalar ToyBackend interface.
+   */
+  sendPulse(channel: PulseChannel, hexArray: string[], signal: AbortSignal): Promise<void>;
+  /**
+   * Clear the waveform queue for a specific channel.
+   * Useful to stop pulse patterns without zeroing the strength.
+   */
+  clearQueue(channel: StrengthChannel, signal: AbortSignal): Promise<void>;
+  /**
+   * Adjust strength by a relative delta using increment/decrement mode.
+   * Mode 0 = decrement, Mode 1 = increment.
+   */
+  adjustStrength(channel: StrengthChannel, mode: StrengthMode, delta: number, signal: AbortSignal): Promise<void>;
+  private serverName;
+  private handleConnection;
+  private bindApp;
+  private handleAppMessage;
+  private handleAppDisconnect;
+  private resetReadyPromise;
+  private waitForReady;
+  private sendCommand;
+  private startHeartbeat;
+  private stopHeartbeat;
+  private assertReady;
+  /**
+   * Mark the App as disconnected while keeping the WSS server running.
+   * The server stays listening so a new App can rebind without calling
+   * connect() again. Only close() tears down the WSS server.
+   */
+  private markAppDisconnected;
+}
+//#endregion
 //#region src/monsterparty.d.ts
 /** Configuration owned by the MonsterParty provider. */
 interface MonsterPartyConfig {
@@ -209,11 +379,12 @@ declare class ManagedButtplugBackend implements ToyBackend {
   stop(deviceId: string | undefined, signal?: AbortSignal): Promise<void>;
   close(): Promise<void>;
 }
-/** Configuration for automatic selection between local hardware and MonsterParty remote links. */
+/** Configuration for automatic selection between local hardware, MonsterParty remote links, and DG-LAB Coyote. */
 interface AutoToyBackendConfig {
   buttplug: ButtplugConfig;
   intiface: IntifaceProcessConfig;
   monsterParty?: MonsterPartyConfig;
+  dgLab?: DgLabConfig;
 }
 /** Select a backend from the exact model supplied at connection time. */
 declare class AutoToyBackend implements ToyBackend {
@@ -383,6 +554,18 @@ interface Config {
   maxIntensityPercent?: number;
   /** Permit indefinite hold commands. */
   allowHold?: boolean;
+  /** DG-LAB Coyote WebSocket server listen port (0 = random). */
+  dgLabListenPort?: number;
+  /** DG-LAB Coyote public host or IP for QR code (must be reachable from the phone). */
+  dgLabPublicHost?: string;
+  /** DG-LAB Coyote WebSocket scheme for the QR code URL. */
+  dgLabWsScheme?: 'ws' | 'wss';
+  /** DG-LAB Coyote heartbeat broadcast interval. */
+  dgLabHeartbeatIntervalMs?: number;
+  /** DG-LAB Coyote maximum strength value (0-200). */
+  dgLabMaxStrength?: number;
+  /** DG-LAB Coyote App binding wait timeout. */
+  dgLabReadyTimeoutMs?: number;
 }
 declare const Config: z<Config>;
 type ResolvedConfig = Required<Omit<Config, 'monsterPartySessionToken'>> & Pick<Config, 'monsterPartySessionToken'>;
@@ -391,4 +574,4 @@ declare function resolveConfig(config: Config): ResolvedConfig;
 /** Register the connection, discovery, control, stop, and disconnect tools. */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { AutoToyBackend, type AutoToyBackendConfig, ButtplugBackend, type ButtplugConfig, Config, type IntifaceArtifact, type IntifaceProcessConfig, IntifaceProcessManager, MACOS_RAW_BLE_SCANNER_SOURCE, ManagedButtplugBackend, MonsterPartyBackend, type MonsterPartyConfig, type RawBleAdvertisement, type RuntimeControlRequest, type RuntimeControlResult, type ToyBackend, type ToyConnection, type ToyDevice, ToyError, type ToyFeature, type ToyFeatureKind, type ToyLevelCommand, type ToyProvider, ToyRuntime, type ToySafetyConfig, type ToyTarget, apply, createIntifaceUserDeviceConfig, extractIntifaceExecutable, inject, installIntifaceEngine, intifaceArguments, name, parseButtplugDeviceList, parseRawBleScan, resolveConfig, routeToyTarget, scanMacOSRawBle, selectIntifaceArtifact };
+export { AutoToyBackend, type AutoToyBackendConfig, ButtplugBackend, type ButtplugConfig, Config, DEFAULT_STRENGTH_LIMIT, DgLabBackend, type DgLabConfig, type IntifaceArtifact, type IntifaceProcessConfig, IntifaceProcessManager, MACOS_RAW_BLE_SCANNER_SOURCE, MAX_MESSAGE_LENGTH, MAX_PULSE_PER_SEND, ManagedButtplugBackend, MonsterPartyBackend, type MonsterPartyConfig, type PulseChannel, type RawBleAdvertisement, type RuntimeControlRequest, type RuntimeControlResult, type StrengthChannel, type StrengthMode, type ToyBackend, type ToyConnection, type ToyDevice, ToyError, type ToyFeature, type ToyFeatureKind, type ToyLevelCommand, type ToyProvider, ToyRuntime, type ToySafetyConfig, type ToyTarget, apply, buildQrPayload, clearCmd, createIntifaceUserDeviceConfig, extractIntifaceExecutable, inject, installIntifaceEngine, intifaceArguments, mapIntensityToStrength, name, parseButtplugDeviceList, parseRawBleScan, pulseCmd, resolveConfig, routeToyTarget, scanMacOSRawBle, selectIntifaceArtifact, strengthCmd };

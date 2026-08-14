@@ -4,6 +4,13 @@ dsh-toy is an independent integration inspired by these projects and protocols:
   https://github.com/Kristenkristen/Chemtrails
 - Buttplug, Copyright Nonpolynomial Labs, LLC and contributors, BSD 3-Clause:
   https://github.com/buttplugio/buttplug
+- DG-LAB V3 Socket Control Protocol, Copyright DG-LAB and contributors:
+  https://github.com/ZGQ-inc/DG-LAB-OPENSOURCE
 
-No source files from either project are redistributed here. Protocol names and
-message fields are used for interoperability.
+This project uses the following third-party npm packages:
+
+- qrcode, Copyright Ryan Day and contributors, MIT License:
+  https://github.com/soldair/node-qrcode
+
+No source files from any of these projects are redistributed here. Protocol
+names and message fields are used for interoperability.

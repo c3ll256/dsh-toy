@@ -8,6 +8,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import { AutoToyBackend } from './auto.ts'
 import { ButtplugBackend } from './buttplug.ts'
+import { DgLabBackend } from './dglab/index.ts'
 import { MonsterPartyBackend } from './monsterparty.ts'
 import { scanMacOSRawBle } from './macos-ble.ts'
 import { ToyRuntime } from './runtime.ts'
@@ -24,6 +25,18 @@ export { extractIntifaceExecutable, installIntifaceEngine, selectIntifaceArtifac
 export type { IntifaceArtifact } from './intiface-download.ts'
 export { MonsterPartyBackend } from './monsterparty.ts'
 export type { MonsterPartyConfig } from './monsterparty.ts'
+export {
+  DgLabBackend,
+  strengthCmd,
+  clearCmd,
+  pulseCmd,
+  mapIntensityToStrength,
+  buildQrPayload,
+  MAX_MESSAGE_LENGTH,
+  MAX_PULSE_PER_SEND,
+  DEFAULT_STRENGTH_LIMIT,
+} from './dglab/index.ts'
+export type { DgLabConfig, StrengthChannel, StrengthMode, PulseChannel } from './dglab/index.ts'
 export { ToyRuntime } from './runtime.ts'
 export type { RuntimeControlRequest, RuntimeControlResult, ToySafetyConfig } from './runtime.ts'
 export { ToyError } from './types.ts'
@@ -84,6 +97,18 @@ export interface Config {
   maxIntensityPercent?: number
   /** Permit indefinite hold commands. */
   allowHold?: boolean
+  /** DG-LAB Coyote WebSocket server listen port (0 = random). */
+  dgLabListenPort?: number
+  /** DG-LAB Coyote public host or IP for QR code (must be reachable from the phone). */
+  dgLabPublicHost?: string
+  /** DG-LAB Coyote WebSocket scheme for the QR code URL. */
+  dgLabWsScheme?: 'ws' | 'wss'
+  /** DG-LAB Coyote heartbeat broadcast interval. */
+  dgLabHeartbeatIntervalMs?: number
+  /** DG-LAB Coyote maximum strength value (0-200). */
+  dgLabMaxStrength?: number
+  /** DG-LAB Coyote App binding wait timeout. */
+  dgLabReadyTimeoutMs?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -106,6 +131,12 @@ export const Config: z<Config> = z.object({
   maxDurationSeconds: z.number().default(300),
   maxIntensityPercent: z.number().default(100),
   allowHold: z.boolean().default(false),
+  dgLabListenPort: z.number().default(0),
+  dgLabPublicHost: z.string().default('127.0.0.1'),
+  dgLabWsScheme: z.union(['ws', 'wss'] as const).default('ws'),
+  dgLabHeartbeatIntervalMs: z.number().default(20_000),
+  dgLabMaxStrength: z.number().default(200),
+  dgLabReadyTimeoutMs: z.number().default(60_000),
 })
 
 type ResolvedConfig = Required<Omit<Config, 'monsterPartySessionToken'>> & Pick<Config, 'monsterPartySessionToken'>
@@ -129,7 +160,7 @@ function nonNegativeNumber(config: ResolvedConfig, key: keyof ResolvedConfig): v
 /** Resolve configuration and fail plugin load on unsafe or incomplete values. */
 export function resolveConfig(config: Config): ResolvedConfig {
   const resolved = config as ResolvedConfig
-  for (const key of ['connectionTimeoutMs', 'requestTimeoutMs', 'intifaceStartupTimeoutMs', 'readyTimeoutMs', 'heartbeatIntervalMs', 'scanDurationMs', 'rawBleScanDurationMs'] as const) {
+  for (const key of ['connectionTimeoutMs', 'requestTimeoutMs', 'intifaceStartupTimeoutMs', 'readyTimeoutMs', 'heartbeatIntervalMs', 'scanDurationMs', 'rawBleScanDurationMs', 'dgLabHeartbeatIntervalMs', 'dgLabReadyTimeoutMs'] as const) {
     positiveInteger(resolved, key)
   }
   for (const key of ['defaultDurationSeconds', 'maxDurationSeconds', 'maxIntensityPercent'] as const) {
@@ -141,6 +172,13 @@ export function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(resolved.maxIntensityPercent) || resolved.maxIntensityPercent > 100) {
     throw new Error('dsh-toy: maxIntensityPercent must be a safe integer from 0 to 100')
   }
+  if (!Number.isSafeInteger(resolved.dgLabListenPort) || resolved.dgLabListenPort < 0 || resolved.dgLabListenPort > 65_535) {
+    throw new Error('dsh-toy: dgLabListenPort must be 0 (random) or a port from 1 to 65535')
+  }
+  if (!Number.isSafeInteger(resolved.dgLabMaxStrength) || resolved.dgLabMaxStrength < 0 || resolved.dgLabMaxStrength > 200) {
+    throw new Error('dsh-toy: dgLabMaxStrength must be a safe integer from 0 to 200')
+  }
+  if (resolved.dgLabPublicHost.trim().length === 0) throw new Error('dsh-toy: dgLabPublicHost cannot be empty')
   for (const [key, value, protocols] of [
     ['buttplugUrl', resolved.buttplugUrl, ['ws:', 'wss:']],
     ['monsterPartyApiUrl', resolved.monsterPartyApiUrl, ['http:', 'https:']],
@@ -180,6 +218,14 @@ function createBackend(config: ResolvedConfig): ToyBackend {
       readyTimeoutMs: config.readyTimeoutMs,
       heartbeatIntervalMs: config.heartbeatIntervalMs,
     } }),
+    dgLab: {
+      listenPort: config.dgLabListenPort,
+      publicHost: config.dgLabPublicHost,
+      wsScheme: config.dgLabWsScheme,
+      heartbeatIntervalMs: config.dgLabHeartbeatIntervalMs,
+      maxStrength: config.dgLabMaxStrength,
+      readyTimeoutMs: config.dgLabReadyTimeoutMs,
+    },
   })
 }
 

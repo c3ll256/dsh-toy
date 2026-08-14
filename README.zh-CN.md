@@ -11,6 +11,7 @@
 - 在 macOS 上，未知硬件会先通过只读的原始 **CoreBluetooth** 广播发现，不启动 Intiface，也不连接设备。
 - 普通蓝牙、串口或 USB 型号通过 **Buttplug / Intiface** 连接；插件会在需要时自动启动本机 Intiface Engine。
 - 安可尼、谜姬、醉清风等已知分享链接型号通过 **MonsterParty** 连接；已知双通道设备会分别暴露各个输出通道。
+- **DG-LAB 郊狼**（Coyote 3.0）通过官方 V3 WebSocket 绑定协议连接。插件启动 WebSocket 服务端并生成二维码，用户用 DG-LAB App 扫码绑定后即可控制设备。
 
 用户不需要理解或选择底层连接方式，也不需要手动启动 Intiface。
 
@@ -127,6 +128,51 @@ MONSTERPARTY_TOKEN=<TOKEN>
 
 分享 token 通常只能使用一次，并在断开后失效。重新连接前应生成新链接。
 
+## DG-LAB 郊狼
+
+DG-LAB 郊狼（Coyote 3.0）通过官方 V3 WebSocket 绑定协议连接，无需逆向蓝牙协议。
+
+### 工作流程
+
+1. agent 使用型号名称（如"我的郊狼"或"my Coyote"）调用 `toy_connect`。
+2. 插件启动本地 WebSocket 服务端并生成二维码。
+3. agent 将二维码展示给用户（图片文件或 URL）。
+4. 用户在手机上打开 **DG-LAB App** 并扫描二维码。
+5. App 通过局域网绑定到插件的 WebSocket 服务端。
+6. agent 调用 `toy_scan` 确认绑定，然后用 `toy_control` 控制设备。
+
+### 配置
+
+DG-LAB 后端需要手机能访问运行 DSH 的电脑。将 `dgLabPublicHost` 设为电脑的局域网 IP（不要用 `127.0.0.1`）：
+
+```yaml
+- id: dsh-toy
+  config:
+    dgLabPublicHost: 192.168.1.100
+    dgLabListenPort: 56789
+    dgLabMaxStrength: 200
+    defaultDurationSeconds: 30
+    maxDurationSeconds: 300
+    maxIntensityPercent: 100
+    allowHold: false
+```
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `dgLabPublicHost` | `127.0.0.1` | 嵌入二维码的主机名或 IP；必须能从手机访问 |
+| `dgLabListenPort` | `0`（随机） | WebSocket 服务端口；`0` 为随机临时端口，也可固定如 `56789` |
+| `dgLabWsScheme` | `ws` | WebSocket 协议（局域网用 `ws`，TLS 用 `wss`） |
+| `dgLabHeartbeatIntervalMs` | `20000` | 心跳广播间隔 |
+| `dgLabMaxStrength` | `200` | 100% 强度对应的最大强度值（0-200） |
+| `dgLabReadyTimeoutMs` | `60000` | `toy_scan` 等待 App 绑定的超时时间 |
+
+### 通道
+
+郊狼有两个独立的电刺激通道（A 和 B），分别暴露为两个 `vibrate` feature。设置 `intensity_percent` 会映射到郊狼的 0-200 强度范围。省略 `feature_id` 时同时控制两个通道。
+
+### 协议
+
+本实现遵循 [DG-LAB V3 Socket 控制协议](https://github.com/ZGQ-inc/DG-LAB-OPENSOURCE/blob/main/socket/README.md)。插件同时充当 WebSocket 服务端和控制器；DG-LAB App 扫码后作为 App 端连接。
 ## 模型工具
 
 | 工具 | 作用 |
@@ -150,6 +196,8 @@ macOS 未知型号：`toy_scan_raw_ble` → 使用广播名称作为硬件证据
 - Intiface 启动但扫描失败：检查系统是否已授予 DSH/终端蓝牙权限。
 - 原始 BLE 扫描无法构建辅助程序：运行 `xcode-select --install` 安装 Xcode Command Line Tools，或使用 Intiface 回退。
 - MonsterParty 连接被拒绝：分享 token 可能已使用或过期，请生成新链接后重试。
+- DG-LAB App 无法连接：确认手机和电脑在同一网络，`dgLabPublicHost` 已设为电脑局域网 IP（不是 `127.0.0.1`），且端口未被防火墙阻止。
+- DG-LAB 扫描返回空：App 可能还未扫码，或绑定超时；请增大 `dgLabReadyTimeoutMs` 后重试。
 
 ## 已知限制
 
@@ -157,6 +205,7 @@ macOS 未知型号：`toy_scan_raw_ble` → 使用广播名称作为硬件证据
 - 内置 RoomFun 映射仅对 BLE 名称 `RoomFun`、型号标识 `RF_CANNON_PT3`、固件 `4.3` 和一个振动输出完成了实机验证，不会假定其他 RoomFun 型号兼容。
 - 原始 BLE 广播发现仅支持 macOS，并依赖 Xcode Command Line Tools 提供的 Swift 编译器；它只负责只读发现，不是未知设备的通用控制协议。
 - Buttplug 连接当前只暴露标量 feature；位置、方向、传感器、原始访问和订阅不在当前范围内。
+- DG-LAB 郊狼连接实现了 V3 WebSocket 协议的强度控制和清除命令。波形/脉冲命令生成已作为导出工具函数（`pulseCmd`）提供，但不通过模型工具接口暴露，该接口仅支持标量强度控制。
 - 测试使用本地协议 fixture，不连接物理硬件。
 - 设备重连后应重新调用 `toy_list` 刷新设备 id。
 

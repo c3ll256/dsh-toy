@@ -11,6 +11,7 @@ At connection time, the agent first asks for the brand and model, then selects t
 - On macOS, unknown hardware first uses read-only raw **CoreBluetooth** advertisement discovery, without starting Intiface or connecting to devices.
 - Regular Bluetooth, serial, and USB models use **Buttplug / Intiface**. The plugin starts local Intiface Engine automatically when needed.
 - Known sharing-link models from Ankni (安可尼), MizzZee (谜姬), and Zuiqingfeng (醉清风) use **MonsterParty**. Known dual-output devices expose their channels separately.
+- **DG-LAB Coyote** (郊狼 3.0) uses the official V3 WebSocket binding protocol. The plugin starts a WebSocket server, renders a QR code, and the user scans it with the DG-LAB app to bind and control the device.
 
 Users do not need to understand or select an underlying connection method, or manually start Intiface.
 
@@ -127,6 +128,51 @@ Then override the plugin row in the profile's `cordis.patch.yml`:
 
 Sharing tokens are commonly single-use and expire after disconnection. Generate a new link before reconnecting.
 
+## DG-LAB Coyote
+
+The DG-LAB Coyote (郊狼 3.0) connects through the official V3 WebSocket binding protocol — no BLE reverse engineering required.
+
+### How it works
+
+1. The agent starts `toy_connect` with the model name (e.g. "my Coyote" or "我的郊狼").
+2. The plugin starts a local WebSocket server and generates a QR code.
+3. The agent displays the QR code to the user (as an image file or URL).
+4. The user opens the **DG-LAB app** on their phone and scans the QR code.
+5. The app binds to the plugin's WebSocket server over the local network.
+6. The agent calls `toy_scan` to confirm binding, then controls the device with `toy_control`.
+
+### Configuration
+
+The DG-LAB backend needs the phone to reach the computer running DSH. Set `dgLabPublicHost` to the computer's LAN IP (not `127.0.0.1`):
+
+```yaml
+- id: dsh-toy
+  config:
+    dgLabPublicHost: 192.168.1.100
+    dgLabListenPort: 56789
+    dgLabMaxStrength: 200
+    defaultDurationSeconds: 30
+    maxDurationSeconds: 300
+    maxIntensityPercent: 100
+    allowHold: false
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `dgLabPublicHost` | `127.0.0.1` | Hostname or IP embedded in the QR code; must be reachable from the phone |
+| `dgLabListenPort` | `0` (random) | WebSocket server port; use `0` for a random ephemeral port or a fixed port like `56789` |
+| `dgLabWsScheme` | `ws` | WebSocket scheme (`ws` for LAN, `wss` for TLS) |
+| `dgLabHeartbeatIntervalMs` | `20000` | Heartbeat broadcast interval |
+| `dgLabMaxStrength` | `200` | Maximum strength value (0-200) mapped from 100% intensity |
+| `dgLabReadyTimeoutMs` | `60000` | Timeout for waiting the app to bind during `toy_scan` |
+
+### Channels
+
+The Coyote has two independent e-stim channels (A and B), exposed as two `vibrate` features. Setting `intensity_percent` maps to the Coyote's 0-200 strength range. Omitting `feature_id` controls both channels simultaneously.
+
+### Protocol
+
+This implementation follows the [DG-LAB V3 Socket Control Protocol](https://github.com/ZGQ-inc/DG-LAB-OPENSOURCE/blob/main/socket/README.md). The plugin acts as both the WebSocket server and the controller; the DG-LAB app connects as the app endpoint after scanning the QR code.
 ## Model-facing tools
 
 | Tool | Purpose |
@@ -150,6 +196,8 @@ Unknown model on macOS: `toy_scan_raw_ble` → use an advertised name as evidenc
 - Intiface starts but scanning fails: check that the operating system granted Bluetooth access to DSH or its terminal.
 - Raw BLE discovery cannot build its helper: install Xcode Command Line Tools with `xcode-select --install`, or use the Intiface fallback.
 - MonsterParty rejects the connection: the sharing token may be used or expired; generate a fresh link and reconnect.
+- DG-LAB app cannot connect: ensure the phone and computer are on the same network, `dgLabPublicHost` is set to the computer's LAN IP (not `127.0.0.1`), and the port is not blocked by a firewall.
+- DG-LAB scan returns empty: the app may not have scanned the QR code yet, or binding timed out; increase `dgLabReadyTimeoutMs` and try again.
 
 ## Known limitations
 
@@ -157,6 +205,7 @@ Unknown model on macOS: `toy_scan_raw_ble` → use an advertised name as evidenc
 - The built-in RoomFun mapping is hardware-verified for BLE name `RoomFun`, model identifier `RF_CANNON_PT3`, firmware `4.3`, and one vibration output. Other RoomFun models are not assumed compatible.
 - Raw BLE advertisement discovery is macOS-only and requires the Swift compiler from Xcode Command Line Tools. It is read-only discovery, not a generic unknown-device control protocol.
 - The Buttplug connection currently exposes scalar features only; position, direction, sensors, raw access, and subscriptions are outside the current scope.
+- The DG-LAB Coyote connection implements the V3 WebSocket protocol with strength control, clear, and heartbeat commands. It also enforces device-reported per-channel strength limits for safety. Pulse/waveform command generation and relative strength adjustment are available as exported utilities and backend methods (`sendPulse`, `clearQueue`, `adjustStrength`) but not exposed through the model-facing tool interface, which only supports scalar intensity control.
 - Tests use local protocol fixtures rather than physical hardware.
 - Device ids should be refreshed with `toy_list` after reconnection.
 

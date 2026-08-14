@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ButtplugBackend, type ButtplugConfig } from './buttplug.ts'
+import { DgLabBackend, type DgLabConfig } from './dglab/index.ts'
 import { installIntifaceEngine } from './intiface-download.ts'
 import { createIntifaceUserDeviceConfig } from './intiface-user-config.ts'
 import { MonsterPartyBackend, type MonsterPartyConfig } from './monsterparty.ts'
@@ -23,10 +24,19 @@ const MONSTERPARTY_MARKERS = [
   'akn_ds_',
 ] as const
 
+const DGLAB_MARKERS = [
+  'coyote',
+  '郊狼',
+  'dglab',
+  'dg-lab',
+] as const
+
 /** Decide the transport from the user-supplied brand and model, without exposing provider selection. */
 export function routeToyTarget(target: ToyTarget): ToyProvider {
   const identity = `${target.brand ?? ''} ${target.model}`.trim().toLocaleLowerCase()
-  return MONSTERPARTY_MARKERS.some(marker => identity.includes(marker)) ? 'monsterparty' : 'buttplug'
+  if (DGLAB_MARKERS.some(marker => identity.includes(marker))) return 'dglab'
+  if (MONSTERPARTY_MARKERS.some(marker => identity.includes(marker))) return 'monsterparty'
+  return 'buttplug'
 }
 
 /** Process settings for a plugin-owned Intiface Engine. */
@@ -262,11 +272,12 @@ export class ManagedButtplugBackend implements ToyBackend {
   }
 }
 
-/** Configuration for automatic selection between local hardware and MonsterParty remote links. */
+/** Configuration for automatic selection between local hardware, MonsterParty remote links, and DG-LAB Coyote. */
 export interface AutoToyBackendConfig {
   buttplug: ButtplugConfig
   intiface: IntifaceProcessConfig
   monsterParty?: MonsterPartyConfig
+  dgLab?: DgLabConfig
 }
 
 /** Select a backend from the exact model supplied at connection time. */
@@ -294,6 +305,11 @@ export class AutoToyBackend implements ToyBackend {
           throw new ToyError('This model uses a MonsterParty share link; configure a fresh MONSTERPARTY_TOKEN, then reconnect')
         }
         this.active = new MonsterPartyBackend(this.config.monsterParty)
+      } else if (route === 'dglab') {
+        if (this.config.dgLab === undefined) {
+          throw new ToyError('DG-LAB Coyote backend is not available')
+        }
+        this.active = new DgLabBackend(this.config.dgLab)
       } else {
         this.active = new ManagedButtplugBackend(this.config.buttplug, this.config.intiface)
       }

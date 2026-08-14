@@ -1,5 +1,5 @@
 /** Provider kinds supported by dsh-toy. */
-export type ToyProvider = 'buttplug' | 'monsterparty'
+export type ToyProvider = 'buttplug' | 'monsterparty' | 'dglab'
 
 /** Hardware identity supplied by the user so the plugin can select the transport. */
 export interface ToyTarget {
