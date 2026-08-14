@@ -6,7 +6,7 @@
 
 `dsh-toy` 是一个 DeepSeek Harness 插件，用于将小玩具接入 DSH。
 
-连接时，agent 会先询问玩具的品牌和准确型号，再自动选择连接方式：
+连接时，agent 会先询问玩具的品牌和型号，再自动选择连接方式。如果用户确实不知道，agent 会使用 `unknown` 进入通用蓝牙搜索：
 
 - 普通蓝牙、串口或 USB 型号通过 **Buttplug / Intiface** 连接；插件会在需要时自动启动本机 Intiface Engine。
 - 安可尼、谜姬、醉清风等已知分享链接型号通过 **MonsterParty** 连接；已知双通道设备会分别暴露各个输出通道。
@@ -50,9 +50,25 @@ npx -y @deepseek-ai/dsh plugin --profile web remove dsh-toy
 
 需要其他 profile 时，将 `web` 替换为对应名称。
 
+## 快速使用
+
+可以直接告诉 agent：
+
+```text
+我的玩具是 Lovense Lush 3，请连接并扫描。
+```
+
+不知道品牌或型号时，也可以说：
+
+```text
+我不知道品牌和型号，请直接用蓝牙搜索。
+```
+
+agent 会把未知信息传为 `unknown`，然后自动连接 Intiface、扫描设备并列出可控功能。扫描前请打开玩具、保持距离较近，并避免让手机 APP 或其他程序同时占用设备。
+
 ## 自动识别与连接
 
-调用 `toy_connect` 前，agent 必须先询问用户的准确型号，并把型号（以及已知时的品牌）传给工具。工具不会让用户选择底层协议。
+调用 `toy_connect` 前，agent 必须先询问用户的型号，并把型号（以及已知时的品牌）传给工具。用户不知道时传入 `unknown`，系统将尝试通用蓝牙发现。工具不会让用户选择底层协议。
 
 对于本地蓝牙、串口或 USB 设备，系统先尝试连接已有 Intiface 服务；如果 `127.0.0.1:12345` 拒绝连接，插件会自行运行：
 
@@ -60,7 +76,9 @@ npx -y @deepseek-ai/dsh plugin --profile web remove dsh-toy
 intiface-engine --websocket-port 12345 --use-bluetooth-le --use-serial --use-hid
 ```
 
-因此 Intiface Engine 需要已经安装，并且 `intiface-engine` 位于 `PATH`。若可执行文件位于其他位置，可设置 `intifaceExecutable`。插件只会在断开或卸载时终止由自己启动的进程，不会关闭用户原本已运行的 Intiface。
+插件会先查找 `PATH` 中的 Intiface Engine。如果没有安装，默认会从 Buttplug 官方 GitHub Release 下载固定版本，校验 SHA-256 后保存到用户缓存目录并启动。可用 `intifaceAutoDownload: false` 禁用下载，或通过 `intifaceExecutable` 指定其他路径。插件只会在断开或卸载时终止由自己启动的进程，不会关闭用户原本已运行的 Intiface。
+
+当前自动下载支持 macOS ARM64、Linux x64/ARM64 和 Windows x64。其他平台需通过 `intifaceExecutable` 指定已安装的引擎。macOS 首次扫描时可能会请求蓝牙权限，需允许运行 DSH 的终端或应用访问蓝牙。
 
 bundle 默认配置为：
 
@@ -69,6 +87,7 @@ bundle 默认配置为：
   config:
     buttplugProtocolVersion: 4
     intifaceExecutable: intiface-engine
+    intifaceAutoDownload: true
     defaultDurationSeconds: 30
     maxDurationSeconds: 300
     maxIntensityPercent: 100
@@ -103,7 +122,7 @@ MONSTERPARTY_TOKEN=<TOKEN>
 
 | 工具 | 作用 |
 |---|---|
-| `toy_connect` | 根据用户提供的品牌和型号自动选择连接方式并连接 |
+| `toy_connect` | 根据用户提供的型号自动连接；不知道时使用 `unknown` |
 | `toy_scan` | 发现可用设备 |
 | `toy_list` | 列出设备 id 和可控 feature |
 | `toy_control` | 发送有界标量命令 |
@@ -111,6 +130,13 @@ MONSTERPARTY_TOKEN=<TOKEN>
 | `toy_disconnect` | 停止输出并关闭连接 |
 
 典型顺序：`toy_connect` → `toy_scan` → `toy_list` → `toy_control` → `toy_stop` → `toy_disconnect`。
+
+## 故障排查
+
+- 出现 `spawn intiface-engine ENOENT`：请更新到包含自动下载的最新版本，确认 `intifaceAutoDownload: true` 且可以访问 GitHub。
+- 扫描结果为空：确认系统蓝牙已打开、玩具有电且处于附近，并断开手机 APP 或其他控制程序。
+- Intiface 启动但扫描失败：检查系统是否已授予 DSH/终端蓝牙权限。
+- MonsterParty 连接被拒绝：分享 token 可能已使用或过期，请生成新链接后重试。
 
 ## 已知限制
 

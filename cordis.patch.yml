@@ -4,6 +4,7 @@
       config:
         buttplugUrl: ws://127.0.0.1:12345
         buttplugProtocolVersion: 4
+        intifaceAutoDownload: true
         defaultDurationSeconds: 30
         maxDurationSeconds: 300
         maxIntensityPercent: 100
