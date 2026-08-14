@@ -1,8 +1,12 @@
 /** Automatic toy transport selection and managed Intiface Engine startup. */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ButtplugBackend, type ButtplugConfig } from './buttplug.ts'
 import { installIntifaceEngine } from './intiface-download.ts'
+import { createIntifaceUserDeviceConfig } from './intiface-user-config.ts'
 import { MonsterPartyBackend, type MonsterPartyConfig } from './monsterparty.ts'
 import { ToyError, type ToyBackend, type ToyConnection, type ToyDevice, type ToyLevelCommand, type ToyProvider, type ToyTarget } from './types.ts'
 import { delay } from './websocket.ts'
@@ -31,6 +35,37 @@ export interface IntifaceProcessConfig {
   websocketUrl: string
   startupTimeoutMs: number
   autoDownload: boolean
+  /** Include verified local compatibility mappings when the engine schema is supported. */
+  useBuiltinUserDeviceConfig?: boolean
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+}
+
+function intifaceEngineMajor(executable: string, signal: AbortSignal): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    execFile(executable, ['--server-version'], { signal, timeout: 2_000, windowsHide: true }, (error, stdout) => {
+      if (error !== null) {
+        if (signal.aborted || errorCode(error) === 'ENOENT') reject(error)
+        else resolve(undefined)
+        return
+      }
+      const match = /^(\d+)\./.exec(stdout.trim())
+      resolve(match === null ? undefined : Number(match[1]))
+    })
+  })
+}
+
+/** Build the Intiface arguments used by the plugin-owned process. */
+export function intifaceArguments(port: number, userDeviceConfigPath?: string): string[] {
+  return [
+    '--websocket-port', String(port),
+    '--use-bluetooth-le',
+    '--use-serial',
+    '--use-hid',
+    ...(userDeviceConfigPath === undefined ? [] : ['--user-device-config-file', userDeviceConfigPath]),
+  ]
 }
 
 function localWebsocketPort(value: string): number {
@@ -47,6 +82,7 @@ function localWebsocketPort(value: string): number {
 export class IntifaceProcessManager {
   private child: ChildProcess | undefined
   private executable: string
+  private userConfigDirectory: string | undefined
 
   constructor(private readonly config: IntifaceProcessConfig) {
     this.executable = config.executable
@@ -58,16 +94,19 @@ export class IntifaceProcessManager {
     const port = localWebsocketPort(this.config.websocketUrl)
     let child: ChildProcess
     try {
-      child = await this.spawn(this.executable, port, signal)
+      const userDeviceConfigPath = await this.prepareUserDeviceConfig(this.executable, signal)
+      child = await this.spawn(this.executable, port, userDeviceConfigPath, signal)
     } catch (error) {
-      const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
-      if (code !== 'ENOENT' || !this.config.autoDownload) {
+      await this.removeUserDeviceConfig()
+      if (errorCode(error) !== 'ENOENT' || !this.config.autoDownload) {
         throw new ToyError(`Could not start Intiface Engine (${this.executable}): ${error instanceof Error ? error.message : String(error)}`)
       }
       this.executable = await installIntifaceEngine(signal)
       try {
-        child = await this.spawn(this.executable, port, signal)
+        const userDeviceConfigPath = await this.prepareUserDeviceConfig(this.executable, signal)
+        child = await this.spawn(this.executable, port, userDeviceConfigPath, signal)
       } catch (downloadedError) {
+        await this.removeUserDeviceConfig()
         throw new ToyError(`Could not start downloaded Intiface Engine (${this.executable}): ${downloadedError instanceof Error ? downloadedError.message : String(downloadedError)}`)
       }
     }
@@ -76,13 +115,24 @@ export class IntifaceProcessManager {
     child.unref()
   }
 
-  private spawn(executable: string, port: number, signal: AbortSignal): Promise<ChildProcess> {
-    const child = spawn(executable, [
-      '--websocket-port', String(port),
-      '--use-bluetooth-le',
-      '--use-serial',
-      '--use-hid',
-    ], {
+  private async prepareUserDeviceConfig(executable: string, signal: AbortSignal): Promise<string | undefined> {
+    if (this.config.useBuiltinUserDeviceConfig !== true) return undefined
+    const major = await intifaceEngineMajor(executable, signal)
+    if (major !== 4 && major !== 5) return undefined
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-toy-intiface-'))
+    const path = join(directory, 'user-device-config.json')
+    try {
+      await writeFile(path, createIntifaceUserDeviceConfig(major), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true })
+      throw error
+    }
+    this.userConfigDirectory = directory
+    return path
+  }
+
+  private spawn(executable: string, port: number, userDeviceConfigPath: string | undefined, signal: AbortSignal): Promise<ChildProcess> {
+    const child = spawn(executable, intifaceArguments(port, userDeviceConfigPath), {
       stdio: 'ignore',
       windowsHide: true,
     })
@@ -117,23 +167,33 @@ export class IntifaceProcessManager {
   async close(): Promise<void> {
     const child = this.child
     this.child = undefined
-    if (child === undefined || child.exitCode !== null || child.signalCode !== null) return
-    child.kill('SIGTERM')
-    await new Promise<void>((resolve) => {
-      let settled = false
-      const finish = (): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        child.off('exit', finish)
-        resolve()
-      }
-      const timeout = setTimeout(() => {
-        child.kill('SIGKILL')
-        finish()
-      }, 2_000)
-      child.once('exit', finish)
-    })
+    try {
+      if (child === undefined || child.exitCode !== null || child.signalCode !== null) return
+      child.kill('SIGTERM')
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          child.off('exit', finish)
+          resolve()
+        }
+        const timeout = setTimeout(() => {
+          child.kill('SIGKILL')
+          finish()
+        }, 2_000)
+        child.once('exit', finish)
+      })
+    } finally {
+      await this.removeUserDeviceConfig()
+    }
+  }
+
+  private async removeUserDeviceConfig(): Promise<void> {
+    const directory = this.userConfigDirectory
+    this.userConfigDirectory = undefined
+    if (directory !== undefined) await rm(directory, { recursive: true, force: true })
   }
 }
 

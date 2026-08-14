@@ -9,13 +9,17 @@ import z from '@deepseek-ai/schemastery'
 import { AutoToyBackend } from './auto.ts'
 import { ButtplugBackend } from './buttplug.ts'
 import { MonsterPartyBackend } from './monsterparty.ts'
+import { scanMacOSRawBle } from './macos-ble.ts'
 import { ToyRuntime } from './runtime.ts'
 import type { ToyBackend, ToyDevice, ToyFeatureKind } from './types.ts'
 
 export { ButtplugBackend, parseButtplugDeviceList } from './buttplug.ts'
 export type { ButtplugConfig } from './buttplug.ts'
-export { AutoToyBackend, IntifaceProcessManager, ManagedButtplugBackend, routeToyTarget } from './auto.ts'
+export { AutoToyBackend, intifaceArguments, IntifaceProcessManager, ManagedButtplugBackend, routeToyTarget } from './auto.ts'
 export type { AutoToyBackendConfig, IntifaceProcessConfig } from './auto.ts'
+export { createIntifaceUserDeviceConfig } from './intiface-user-config.ts'
+export { MACOS_RAW_BLE_SCANNER_SOURCE, parseRawBleScan, scanMacOSRawBle } from './macos-ble.ts'
+export type { RawBleAdvertisement } from './macos-ble.ts'
 export { extractIntifaceExecutable, installIntifaceEngine, selectIntifaceArtifact } from './intiface-download.ts'
 export type { IntifaceArtifact } from './intiface-download.ts'
 export { MonsterPartyBackend } from './monsterparty.ts'
@@ -70,6 +74,8 @@ export interface Config {
   heartbeatIntervalMs?: number
   /** Buttplug discovery window. */
   scanDurationMs?: number
+  /** Read-only macOS CoreBluetooth discovery window for unknown hardware. */
+  rawBleScanDurationMs?: number
   /** Duration used when toy_control omits one. */
   defaultDurationSeconds?: number
   /** Hard command-duration cap. */
@@ -95,6 +101,7 @@ export const Config: z<Config> = z.object({
   readyTimeoutMs: z.number().default(20_000),
   heartbeatIntervalMs: z.number().default(9_000),
   scanDurationMs: z.number().default(5_000),
+  rawBleScanDurationMs: z.number().default(10_000),
   defaultDurationSeconds: z.number().default(30),
   maxDurationSeconds: z.number().default(300),
   maxIntensityPercent: z.number().default(100),
@@ -122,7 +129,7 @@ function nonNegativeNumber(config: ResolvedConfig, key: keyof ResolvedConfig): v
 /** Resolve configuration and fail plugin load on unsafe or incomplete values. */
 export function resolveConfig(config: Config): ResolvedConfig {
   const resolved = config as ResolvedConfig
-  for (const key of ['connectionTimeoutMs', 'requestTimeoutMs', 'intifaceStartupTimeoutMs', 'readyTimeoutMs', 'heartbeatIntervalMs', 'scanDurationMs'] as const) {
+  for (const key of ['connectionTimeoutMs', 'requestTimeoutMs', 'intifaceStartupTimeoutMs', 'readyTimeoutMs', 'heartbeatIntervalMs', 'scanDurationMs', 'rawBleScanDurationMs'] as const) {
     positiveInteger(resolved, key)
   }
   for (const key of ['defaultDurationSeconds', 'maxDurationSeconds', 'maxIntensityPercent'] as const) {
@@ -162,6 +169,7 @@ function createBackend(config: ResolvedConfig): ToyBackend {
       websocketUrl: config.buttplugUrl,
       startupTimeoutMs: config.intifaceStartupTimeoutMs,
       autoDownload: config.intifaceAutoDownload,
+      useBuiltinUserDeviceConfig: true,
     },
     ...((config.monsterPartySessionToken?.length ?? 0) === 0 ? {} : { monsterParty: {
       sessionToken: config.monsterPartySessionToken!,
@@ -200,6 +208,19 @@ const DEVICE_SCHEMA = {
   },
 } as const
 
+const RAW_BLE_DEVICE_SCHEMA = {
+  type: 'object' as const,
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string' as const, required: true },
+    name: { type: 'string' as const },
+    rssi: { type: 'number' as const, required: true },
+    connectable: { type: 'boolean' as const, required: true },
+    manufacturerData: { type: 'string' as const },
+    services: { type: 'array' as const, items: { type: 'string' as const } },
+  },
+} as const
+
 function devicesValue(devices: ToyDevice[]): ToyDevice[] {
   return devices
 }
@@ -217,8 +238,20 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => () => runtime.close(), 'dsh-toy transport teardown')
 
   ctx.tools.register(defineTool({
+    name: 'toy_scan_raw_ble',
+    description: 'On macOS, use this first when the user genuinely does not know the toy brand or model. It bypasses Intiface and performs read-only CoreBluetooth discovery of connectable raw BLE advertisements. It does not connect, control, or write characteristics. Use an unambiguous observed advertised name as hardware evidence for a later toy_connect call; if several candidates are plausible, ask the user to power-cycle the toy and rescan instead of guessing. Raw ids are never accepted by toy_control. On other platforms or when the Swift toolchain is unavailable, fall back to toy_connect with model "unknown".',
+    parameters: {},
+    output: {
+      schema: { type: 'array', items: RAW_BLE_DEVICE_SCHEMA },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    execute: async (_args, exec) => scanMacOSRawBle(resolved.rawBleScanDurationMs, exec.signal),
+    presentCall: () => ({ card: 'generic', title: 'Scan raw Bluetooth LE advertisements', kind: 'search' }),
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'toy_connect',
-    description: 'Before the first connection, ask the user for the toy brand and model. If they do not know either value, pass "unknown" and try generic Bluetooth discovery. Never ask the user to choose a connection backend, install Intiface, or start Intiface. The tool selects the connection, downloads a verified official Intiface Engine when missing, and starts it automatically. Secrets come only from plugin config.',
+    description: 'Before the first connection, ask once for the toy brand and model. Pass the user-reported values even when they are not on a known list. When the user genuinely does not know, use toy_scan_raw_ble first on macOS; use an observed advertised name as hardware evidence, or pass "unknown" only when raw discovery is unavailable or inconclusive. Never guess a protocol, probe arbitrary BLE characteristics, or ask the user to choose a backend, install Intiface, or start Intiface. The tool selects the connection, includes verified compatibility mappings for supported unlisted devices, downloads a verified official Intiface Engine when missing, and starts it automatically. Secrets come only from plugin config.',
     parameters: {
       model: { type: 'string', required: true, description: 'Product model reported by the user, or "unknown" when they explicitly do not know it. Do not guess.' },
       brand: { type: 'string', description: 'Brand reported by the user, when known.' },
@@ -246,7 +279,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'toy_scan',
-    description: 'After toy_connect has selected and connected the user-confirmed model, scan for devices using the bounded discovery window.',
+    description: 'After toy_connect has selected and connected the user-confirmed or unknown model, scan for devices using the bounded discovery window. Only verified protocols are returned; an empty result does not authorize guessing commands or writing arbitrary BLE data.',
     parameters: {},
     output: {
       schema: { type: 'array', items: DEVICE_SCHEMA },

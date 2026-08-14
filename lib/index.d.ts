@@ -176,17 +176,24 @@ interface IntifaceProcessConfig {
   websocketUrl: string;
   startupTimeoutMs: number;
   autoDownload: boolean;
+  /** Include verified local compatibility mappings when the engine schema is supported. */
+  useBuiltinUserDeviceConfig?: boolean;
 }
+/** Build the Intiface arguments used by the plugin-owned process. */
+declare function intifaceArguments(port: number, userDeviceConfigPath?: string): string[];
 /** Own at most one Intiface Engine process and stop only the process it created. */
 declare class IntifaceProcessManager {
   private readonly config;
   private child;
   private executable;
+  private userConfigDirectory;
   constructor(config: IntifaceProcessConfig);
   start(signal: AbortSignal): Promise<void>;
+  private prepareUserDeviceConfig;
   private spawn;
   assertRunning(): void;
   close(): Promise<void>;
+  private removeUserDeviceConfig;
 }
 /** Buttplug backend that starts Intiface Engine only when the configured local endpoint refuses a connection. */
 declare class ManagedButtplugBackend implements ToyBackend {
@@ -223,6 +230,28 @@ declare class AutoToyBackend implements ToyBackend {
   close(): Promise<void>;
   private requireActive;
 }
+//#endregion
+//#region src/intiface-user-config.d.ts
+/** Built-in Intiface user mappings for devices verified locally but absent upstream. */
+/** Build an Intiface user config matching the executable's device-config major version. */
+declare function createIntifaceUserDeviceConfig(engineMajor: number): string;
+//#endregion
+//#region src/macos-ble.d.ts
+/** Read-only raw BLE discovery through macOS CoreBluetooth. */
+/** One connectable raw BLE advertisement, not a controllable toy device. */
+interface RawBleAdvertisement {
+  id: string;
+  name?: string;
+  rssi: number;
+  connectable: boolean;
+  manufacturerData?: string;
+  services?: string[];
+}
+declare const MACOS_RAW_BLE_SCANNER_SOURCE: string;
+/** Validate and detach the helper's JSON output. */
+declare function parseRawBleScan(raw: string): RawBleAdvertisement[];
+/** Compile a temporary CoreBluetooth helper, scan without Intiface, then remove it. */
+declare function scanMacOSRawBle(durationMs: number, signal: AbortSignal): Promise<RawBleAdvertisement[]>;
 //#endregion
 //#region src/intiface-download.d.ts
 /** Verified download and extraction of the official Intiface Engine CLI. */
@@ -344,6 +373,8 @@ interface Config {
   heartbeatIntervalMs?: number;
   /** Buttplug discovery window. */
   scanDurationMs?: number;
+  /** Read-only macOS CoreBluetooth discovery window for unknown hardware. */
+  rawBleScanDurationMs?: number;
   /** Duration used when toy_control omits one. */
   defaultDurationSeconds?: number;
   /** Hard command-duration cap. */
@@ -360,4 +391,4 @@ declare function resolveConfig(config: Config): ResolvedConfig;
 /** Register the connection, discovery, control, stop, and disconnect tools. */
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { AutoToyBackend, type AutoToyBackendConfig, ButtplugBackend, type ButtplugConfig, Config, type IntifaceArtifact, type IntifaceProcessConfig, IntifaceProcessManager, ManagedButtplugBackend, MonsterPartyBackend, type MonsterPartyConfig, type RuntimeControlRequest, type RuntimeControlResult, type ToyBackend, type ToyConnection, type ToyDevice, ToyError, type ToyFeature, type ToyFeatureKind, type ToyLevelCommand, type ToyProvider, ToyRuntime, type ToySafetyConfig, type ToyTarget, apply, extractIntifaceExecutable, inject, installIntifaceEngine, name, parseButtplugDeviceList, resolveConfig, routeToyTarget, selectIntifaceArtifact };
+export { AutoToyBackend, type AutoToyBackendConfig, ButtplugBackend, type ButtplugConfig, Config, type IntifaceArtifact, type IntifaceProcessConfig, IntifaceProcessManager, MACOS_RAW_BLE_SCANNER_SOURCE, ManagedButtplugBackend, MonsterPartyBackend, type MonsterPartyConfig, type RawBleAdvertisement, type RuntimeControlRequest, type RuntimeControlResult, type ToyBackend, type ToyConnection, type ToyDevice, ToyError, type ToyFeature, type ToyFeatureKind, type ToyLevelCommand, type ToyProvider, ToyRuntime, type ToySafetyConfig, type ToyTarget, apply, createIntifaceUserDeviceConfig, extractIntifaceExecutable, inject, installIntifaceEngine, intifaceArguments, name, parseButtplugDeviceList, parseRawBleScan, resolveConfig, routeToyTarget, scanMacOSRawBle, selectIntifaceArtifact };
