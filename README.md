@@ -33,7 +33,7 @@ Use only hardware you own or are explicitly authorized to control. Treat sharing
 
 ## Install
 
-Requirements: Node.js 22.19 or newer and pnpm on `PATH`. Raw macOS BLE discovery additionally uses the Swift compiler from Xcode Command Line Tools. Install pnpm once if needed with `npm install --global pnpm@10`, then add the plugin directly from GitHub:
+Requirements: Node.js 22.19 or newer and pnpm on `PATH`. Raw macOS BLE discovery additionally uses the Swift compiler from Xcode Command Line Tools. The bundle targets the `@deepseek-ai/dsh` 0.1.2-rc.1 line, which CI installs and boots on every change. Install pnpm once if needed with `npm install --global pnpm@10`, then add the plugin directly from GitHub:
 
 ```sh
 npx -y @deepseek-ai/dsh plugin --profile web add github:c3ll256/dsh-toy

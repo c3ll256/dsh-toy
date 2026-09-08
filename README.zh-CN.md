@@ -33,7 +33,7 @@
 
 ## 安装
 
-运行要求：Node.js 22.19 或更高版本，并确保 `pnpm` 在 `PATH` 中。macOS 原始 BLE 发现还需要 Xcode Command Line Tools 提供的 Swift 编译器。如尚未安装 pnpm，先运行一次 `npm install --global pnpm@10`，然后直接从 GitHub 安装插件：
+运行要求：Node.js 22.19 或更高版本，并确保 `pnpm` 在 `PATH` 中。macOS 原始 BLE 发现还需要 Xcode Command Line Tools 提供的 Swift 编译器。插件面向 `@deepseek-ai/dsh` 0.1.2-rc.1 版本线，CI 每次改动都会实际安装并启动验证。如尚未安装 pnpm，先运行一次 `npm install --global pnpm@10`，然后直接从 GitHub 安装插件：
 
 ```sh
 npx -y @deepseek-ai/dsh plugin --profile web add github:c3ll256/dsh-toy
